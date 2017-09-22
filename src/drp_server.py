@@ -190,7 +190,7 @@ class DRPServer(object):
 
     def start(self):
         """
-            start()
+            start
         """
 
         # Conecta con el GCS via mavlink
