@@ -1,0 +1,13 @@
+#!/bin/bash
+#  Author: Javier Arellano-Verdejo
+#  Date: Sep/2017
+#  Version: 0.1.1
+
+SPACE=1200
+MARK=2200
+BAUDRATE=100
+STOPBITS=2
+DATAFILE=./modem_raw/data-log
+
+rm -f data*
+minimodem --rx $BAUDRATE --mark $MARK --space $SPACE --stopbits $STOPBITS > $DATAFILE

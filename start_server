@@ -1,0 +1,7 @@
+#!/bin/bash
+#  Author: Javier Arellano-Verdejo
+#  Date: Sep/2017
+#  Version: 0.1.1
+
+cd bin
+python drp_server.py
