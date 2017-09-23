@@ -2,7 +2,7 @@ from pymavlink import mavutil
 import time
 
 
-class Link:
+class Link(object):
 
     def __init__(self, ip, port):
         self.gps = None
