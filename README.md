@@ -13,7 +13,8 @@ UAV data -> stp4uav -> vTX (audio channel) ------> GCS -> stp4uav -> Display
 
 * [minimodem](http://www.whence.com/minimodem/) - General-purpose software audio FSK modem
 * [PyCRC](https://pypi.python.org/pypi/PyCRC) - Python CRC Calculations Modules
-* [pymavlink 2.2.5][https://pypi.python.org/pypi/pymavlink] - Pymavlink
+* [pymavlink](https://pypi.python.org/pypi/pymavlink) - Pymavlink
+
 ### Running in the UAV
 
 ### Running in the GCS
