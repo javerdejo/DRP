@@ -3,7 +3,7 @@
 """
     Author: Javier Arellano-Verdejo
     Date: Sep/2017
-    Version: 0.2.1
+    Version: 0.2.2
 """
 
 from __future__ import print_function
@@ -18,7 +18,8 @@ from PyCRC.CRC16 import CRC16
 
 from drp import mavcom as mc
 from drp import typedata as td
-from settings import (INFILE, OUTDIR)
+
+from settings import (INFILE, OUTDIR, MAVADDRESS, MAVPORT)
 
 
 def start_telemetry_reading(f):
@@ -45,6 +46,10 @@ def start_telemetry_reading(f):
         yield c
 
 
+def sigint_handler(signum, frame):
+    _server.stop()
+
+
 class DRPServer(object):
 
     def __init__(self):
@@ -54,6 +59,13 @@ class DRPServer(object):
 
         global _server
         _server = self
+
+        # messages deffinition
+        self.DRP_GOBAL_POSITION = '1'
+        self.DRP_ATTITUDE = '2'
+        self.DRP_NAV_INFO = '3'
+        self.DRP_SENSOR_BANK_1 = '4'
+        self.DRP_SENSOR_BANK_2 = '5'
 
         # definicion de la matriz de adyacencia del AFS para el procesamiento
         # del stream de entrada
@@ -73,14 +85,15 @@ class DRPServer(object):
         self.packet_ok = 0  # numero de paquetes recibidos con error
 
         out_fname = OUTDIR + '/' + time.strftime("%Y-%m-%Y_%H-%M-%S_") + 'data.csv'
-        self.infile = open(INFILE, 'rb')
         self.outfile = open(out_fname, 'w')
+        self.infile = open(INFILE, 'rb')
 
+        # TEMPORALES solo para fines de simulacion
         self.lat = 0
         self.lon = 0
 
         # Comunicación con MavLink
-        self.link = mc.Link('127.0.0.1', 14550)
+        self.link = mc.Link(MAVADDRESS, MAVPORT)
         self.gps = td.GPS()
         self.status = td.StatusUAV()
 
@@ -94,9 +107,9 @@ class DRPServer(object):
             :return: indice para acceso a la matriz AFD
         """
 
-        if ord(c) == self.BYTE_START:
+        if c == self.BYTE_START:
             return 0
-        elif ord(c) == self.BYTE_END:
+        elif c == self.BYTE_END:
             return 1
         else:
             return 2
@@ -116,6 +129,7 @@ class DRPServer(object):
         buf = []
 
         for c in data:
+            c = ord(c)
             pstate = cstate
             cstate = self.AFD[cstate-1][self.get_data_index(c)]
             if cstate == 3:
@@ -123,62 +137,13 @@ class DRPServer(object):
                     continue
                 elif pstate == 4:
                     buf.append(self.BYTE_END)
-                    buf.append(ord(c))
+                    buf.append(c)
                 else:
-                    buf.append(ord(c))
+                    buf.append(c)
             elif cstate == 5:
                 self.proccess_packet(buf)
                 cstate = 1
                 buf = []
-
-    def proccess_packet(self, data):
-        """
-            proccess_packet
-
-            procesa el paquete de datos obtenido por el AFD
-
-            :param: data, paquete de datos extraido por la función 'proccess_stream'
-            del lujo de entrada
-            :return: none
-        """
-
-        """
-            ToDo Distinguir entre distintos tipos de packetes
-            
-            - GPS
-            - Sensores
-            - Attitud
-        """
-
-        str_data = array.array('B', data).tostring()
-        data_long = struct.unpack('iii', str_data)
-
-        # --- Chck CRC ---
-        data_packed = struct.pack('ii', data_long[0], data_long[1])
-        crc16 = CRC16().calculate(data_packed)
-
-        if data_long[2] == crc16:
-            self.packet_ok += 1
-            total = self.packet_ok + self.packet_error
-            percent = (self.packet_ok * 100.0) / total
-            self.outfile.write('{},{},{},{:2.2f},{},{},{:f},{:f}\n'
-                               .format(self.packet_ok, self.packet_error, total, percent, time.strftime("%d/%m/%Y"),
-                                       time.strftime("%H:%M:%S"), data_long[0]/1000000.0, data_long[1]/1000000.0))
-            self.outfile.flush()
-
-            # simula el avance del avion
-            if self.lat == 0:
-                self.lat = data_long[0] * 10
-                self.lon = data_long[1] * 10
-            else:
-                self.lon += 1000
-
-            self.gps.set_data(self.lat, self.lon, 0, 0, 0, 0, 0, 0)
-            self.status.set_data(1, 0, 128, 0, 4)
-
-            self.send_mavlink_data(self.gps, self.status)
-        else:
-            self.packet_error += 1
 
     def send_mavlink_data(self, gps, status):
         """
@@ -212,9 +177,206 @@ class DRPServer(object):
         self.outfile.close()
         sys.exit(0)
 
+    def proccess_packet(self, data):
+        """
+            proccess_packet
 
-def sigint_handler(signum, frame):
-    _server.stop()
+            procesa el paquete de datos obtenido por el AFD
+
+            :param: data, paquete de datos extraido por la función 'proccess_stream'
+            del lujo de entrada
+            :return: none
+        """
+
+        """
+            ToDo Distinguir entre distintos tipos de packetes
+            
+            - GPS
+            - Sensores
+            - Attitud
+        """
+
+        message = chr(data[0])
+        str_data = array.array('B', data[1:]).tostring()
+        if message == self.DRP_GOBAL_POSITION:
+            print("DRP_GOBAL_POSITION ")
+
+            data_long = struct.unpack('=iii', str_data)
+
+            # --- Check CRC ---
+            data_packed = struct.pack('=ii', data_long[0], data_long[1])
+            crc16 = CRC16().calculate(data_packed)
+
+            if data_long[2] == crc16:
+                self.packet_ok += 1
+                total = self.packet_ok + self.packet_error
+                percent = (self.packet_ok * 100.0) / total
+                self.outfile.write('{},{},{},{},{:2.2f},{},{},{:f},{:f}\n'
+                                   .format(
+                                        ord(message),
+                                        self.packet_ok,
+                                        self.packet_error,
+                                        total,
+                                        percent,
+                                        time.strftime("%d/%m/%Y"),
+                                        time.strftime("%H:%M:%S"),
+                                        data_long[0]/1000000.0,
+                                        data_long[1]/1000000.0
+                                    ))
+                self.outfile.flush()
+
+                # simula el avance del avion
+                if self.lat == 0:
+                    self.lat = data_long[0] * 10
+                    self.lon = data_long[1] * 10
+                else:
+                    self.lon += 1000
+
+                self.gps.set_data(self.lat, self.lon, 0, 0, 0, 0, 0, 0)
+                self.status.set_data(1, 0, 128, 0, 4)
+
+                self.send_mavlink_data(self.gps, self.status)
+            else:
+                print("CRC error")
+                self.packet_error += 1
+
+        elif message == self.DRP_ATTITUDE:
+            print("DRP_ATTITUDE")
+
+            data_long = struct.unpack('=hhhi', str_data)
+
+            # --- Check CRC ---
+            data_packed = struct.pack('=hhh', data_long[0], data_long[1], data_long[2])
+            crc16 = CRC16().calculate(data_packed)
+
+            if data_long[3] == crc16:
+                self.packet_ok += 1
+                total = self.packet_ok + self.packet_error
+                percent = (self.packet_ok * 100.0) / total
+                self.outfile.write('{},{},{},{},{:2.2f},{},{},{:f},{:f},{:f}\n'
+                                   .format(
+                                        ord(message),
+                                        self.packet_ok,
+                                        self.packet_error,
+                                        total,
+                                        percent,
+                                        time.strftime("%d/%m/%Y"),
+                                        time.strftime("%H:%M:%S"),
+                                        data_long[0] / 100.0,
+                                        data_long[1] / 100.0,
+                                        data_long[2] / 100.0
+                                    ))
+                self.outfile.flush()
+
+                self.status.set_data(1, 0, 128, 0, 4)
+
+            else:
+                print("CRC error")
+                self.packet_error += 1
+
+        elif message == self.DRP_NAV_INFO:
+            print("DRP_NAV_INFO")
+
+            data_long = struct.unpack('=hhhBi', str_data)
+
+            # --- Check CRC ---
+            data_packed = struct.pack('=hhhB', data_long[0], data_long[1], data_long[2], data_long[3])
+            crc16 = CRC16().calculate(data_packed)
+
+            if data_long[4] == crc16:
+                self.packet_ok += 1
+                total = self.packet_ok + self.packet_error
+                percent = (self.packet_ok * 100.0) / total
+                self.outfile.write('{},{},{},{},{:2.2f},{},{},{:f},{},{},{}\n'
+                                   .format(
+                                        ord(message),
+                                        self.packet_ok,
+                                        self.packet_error,
+                                        total,
+                                        percent,
+                                        time.strftime("%d/%m/%Y"),
+                                        time.strftime("%H:%M:%S"),
+                                        data_long[0] / 100.0,
+                                        data_long[1] / 100.0,
+                                        data_long[2] / 100.0,
+                                        data_long[3] / 100.0,
+                                    ))
+                self.outfile.flush()
+
+                self.status.set_data(1, 0, 128, 0, 4)
+
+            else:
+                print("CRC error")
+                self.packet_error += 1
+
+        elif message == self.DRP_SENSOR_BANK_1:
+            print("DRP_SENSOR_BANK_1")
+
+            data_long = struct.unpack('=iii', str_data)
+
+            # --- Check CRC ---
+            data_packed = struct.pack('=ii', data_long[0], data_long[1])
+            crc16 = CRC16().calculate(data_packed)
+
+            if data_long[2] == crc16:
+                self.packet_ok += 1
+                total = self.packet_ok + self.packet_error
+                percent = (self.packet_ok * 100.0) / total
+                self.outfile.write('{},{},{},{},{:2.2f},{},{},{:f},{:f}\n'
+                                   .format(
+                                        ord(message),
+                                        self.packet_ok,
+                                        self.packet_error,
+                                        total,
+                                        percent,
+                                        time.strftime("%d/%m/%Y"),
+                                        time.strftime("%H:%M:%S"),
+                                        data_long[0]/1000000.0,
+                                        data_long[1]/1000000.0
+                                    ))
+                self.outfile.flush()
+
+                self.status.set_data(1, 0, 128, 0, 4)
+
+            else:
+                print("CRC error")
+                self.packet_error += 1
+
+        elif message == self.DRP_SENSOR_BANK_2:
+            print("DRP_SENSOR_BANK_2")
+
+            data_long = struct.unpack('=iii', str_data)
+
+            # --- Check CRC ---
+            data_packed = struct.pack('=ii', data_long[0], data_long[1])
+            crc16 = CRC16().calculate(data_packed)
+
+            if data_long[2] == crc16:
+                self.packet_ok += 1
+                total = self.packet_ok + self.packet_error
+                percent = (self.packet_ok * 100.0) / total
+                self.outfile.write('{},{},{},{},{:2.2f},{},{},{:f},{:f}\n'
+                                   .format(
+                                        ord(message),
+                                        self.packet_ok,
+                                        self.packet_error,
+                                        total,
+                                        percent,
+                                        time.strftime("%d/%m/%Y"),
+                                        time.strftime("%H:%M:%S"),
+                                        data_long[0]/1000000.0,
+                                        data_long[1]/1000000.0
+                                    ))
+                self.outfile.flush()
+
+                self.status.set_data(1, 0, 128, 0, 4)
+
+            else:
+                print("CRC_ERROR")
+                self.packet_error += 1
+
+        else:
+            print("unknown message")
 
 
 if __name__ == '__main__':
